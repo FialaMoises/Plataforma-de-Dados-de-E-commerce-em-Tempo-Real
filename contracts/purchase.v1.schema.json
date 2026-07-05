@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ecommerce-lakehouse/contracts/purchase/v1",
+  "title": "PurchaseEvent",
+  "description": "Data contract v1 para o evento de compra. Toda alteração incompatível exige bump de versão (purchase.v2) e período de coexistência. Ver ADR-0003.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "event_type", "user_id", "product_id", "quantity", "price", "currency", "timestamp"],
+  "properties": {
+    "event_id":   { "type": "string", "format": "uuid", "description": "Chave natural única do evento (idempotência)." },
+    "event_type": { "type": "string", "const": "purchase" },
+    "user_id":    { "type": "integer", "minimum": 1 },
+    "product_id": { "type": "integer", "minimum": 1 },
+    "quantity":   { "type": "integer", "minimum": 1, "maximum": 100 },
+    "price":      { "type": "number", "exclusiveMinimum": 0, "description": "Preço unitário em BRL. Regra de negócio: > 0." },
+    "currency":   { "type": "string", "enum": ["BRL", "USD", "EUR"] },
+    "timestamp":  { "type": "string", "format": "date-time", "description": "Event-time em ISO-8601 UTC." },
+    "channel":    { "type": "string", "enum": ["web", "ios", "android"] },
+    "schema_version": { "type": "string", "const": "1.0.0" }
+  }
+}

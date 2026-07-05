@@ -1,0 +1,6 @@
+# Dependências de desenvolvimento/teste no host (não nas imagens).
+pytest==8.2.2
+ruff==0.4.9
+jsonschema==4.22.0
+Faker==25.8.0
+pyspark==3.5.5      # para os testes locais de transformação (opcional, pesado)

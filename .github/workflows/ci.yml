@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dev deps
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check . && ruff format --check .
+
+      - name: Validate data contracts (JSON Schema parse)
+        run: python -c "import json,glob;[json.load(open(f)) for f in glob.glob('contracts/*.json')];print('contracts OK')"
+
+      - name: Unit tests
+        run: pytest -q
+
+  build-images:
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build generator image
+        run: docker build -f generator/Dockerfile -t generator:ci .
+      - name: Validate docker-compose
+        run: docker compose config -q
