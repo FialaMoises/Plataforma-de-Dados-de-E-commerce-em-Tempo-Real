@@ -1,0 +1,39 @@
+version: 2
+
+models:
+  - name: stg_purchases
+    description: >
+      Staging view over silver.purchases. Single entry point for all
+      downstream dbt transformations. Applies no business logic beyond
+      pass-through; keeps the contract boundary clean.
+    columns:
+      - name: event_id
+        description: Unique purchase event identifier (UUID).
+        tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: User who performed the purchase.
+        tests:
+          - not_null
+      - name: product_id
+        description: Product that was purchased.
+        tests:
+          - not_null
+      - name: quantity
+        description: Units purchased (always > 0).
+      - name: unit_price
+        description: Unit price at time of purchase (always > 0).
+      - name: gross_amount
+        description: "quantity * unit_price."
+      - name: currency
+        description: "ISO currency code."
+        tests:
+          - accepted_values:
+              values: ['BRL', 'USD', 'EUR']
+      - name: event_ts
+        description: Event timestamp.
+      - name: channel
+        description: Sales channel.
+      - name: event_date
+        description: Partition key derived from event_ts.

@@ -9,74 +9,51 @@ Dimensões cobertas (os "pilares" de observabilidade de dados):
   negócio             -> unit_price > 0, quantity > 0, gross_amount coerente
   completeness        -> taxa de preenchimento mínima de currency
   freshness           -> existe dado recente (event_date >= hoje-1)
+
+A lógica dos checks está em ``transforms.run_quality_checks`` para ser
+reutilizável pelos testes sem replicação de código.
 """
 
+import logging
 import sys
 
 from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
+from transforms import run_quality_checks
 
-spark = SparkSession.builder.appName("quality-gate").getOrCreate()
-spark.sparkContext.setLogLevel("WARN")
-
-df = spark.read.table("lakehouse.silver.purchases")
-total = df.count()
-
-results = []  # (nome, ok, detalhe, bloqueante)
+logger = logging.getLogger(__name__)
 
 
-def check(name: str, ok: bool, detail: str, blocking: bool = True) -> None:
-    results.append((name, bool(ok), detail, blocking))
+def main() -> None:
+    spark = SparkSession.builder.appName("quality-gate").getOrCreate()
+    spark.sparkContext.setLogLevel("WARN")
+
+    df = spark.read.table("lakehouse.silver.purchases")
+    checks, total = run_quality_checks(df)
+
+    logger.info("──────── DATA QUALITY GATE (Silver) ────────")
+    logger.info("Total de linhas avaliadas: %d\n", total)
+
+    failed_blocking = 0
+    for name, (ok, detail, blocking) in checks.items():
+        status = "PASS" if ok else ("FAIL" if blocking else "WARN")
+        logger.info("  [%4s] %-26s %s", status, name, detail)
+        if not ok and blocking:
+            failed_blocking += 1
+
+    logger.info("────────────────────────────────────────────")
+    if failed_blocking:
+        logger.error(
+            "GATE REPROVADO: %d expectativa(s) bloqueante(s) falharam.",
+            failed_blocking,
+        )
+        spark.stop()
+        sys.exit(1)
+
+    logger.info("GATE APROVADO.")
+    spark.stop()
+    sys.exit(0)
 
 
-if total == 0:
-    check("non_empty", False, "Silver vazia", blocking=True)
-else:
-    null_keys = df.filter(
-        F.col("event_id").isNull() | F.col("user_id").isNull() | F.col("product_id").isNull()
-    ).count()
-    check("no_null_keys", null_keys == 0, f"{null_keys} linhas com chave nula")
-
-    distinct_ids = df.select("event_id").distinct().count()
-    check(
-        "unique_event_id", distinct_ids == total, f"{total - distinct_ids} duplicatas de event_id"
-    )
-
-    bad_price = df.filter(F.col("unit_price") <= 0).count()
-    check("price_positive", bad_price == 0, f"{bad_price} linhas com unit_price <= 0")
-
-    bad_qty = df.filter(F.col("quantity") <= 0).count()
-    check("quantity_positive", bad_qty == 0, f"{bad_qty} linhas com quantity <= 0")
-
-    bad_amount = df.filter(
-        F.abs(F.col("gross_amount") - F.col("quantity") * F.col("unit_price")) > 0.01
-    ).count()
-    check(
-        "gross_amount_consistent",
-        bad_amount == 0,
-        f"{bad_amount} linhas com gross_amount incoerente",
-    )
-
-    filled = df.filter(F.col("currency").isNotNull()).count()
-    rate = filled / total
-    check("currency_completeness", rate >= 0.99, f"completeness={rate:.4f} (min 0.99)")
-
-    fresh = df.filter(F.col("event_date") >= F.date_sub(F.current_date(), 1)).count()
-    check("freshness", fresh > 0, "sem dados nas últimas 24h", blocking=False)
-
-print("\n──────── DATA QUALITY GATE (Silver) ────────")
-print(f"Total de linhas avaliadas: {total}\n")
-failed_blocking = 0
-for name, ok, detail, blocking in results:
-    status = "PASS" if ok else ("FAIL" if blocking else "WARN")
-    print(f"  [{status:4}] {name:26} {detail}")
-    if not ok and blocking:
-        failed_blocking += 1
-
-print("────────────────────────────────────────────")
-if failed_blocking:
-    print(f"GATE REPROVADO: {failed_blocking} expectativa(s) bloqueante(s) falharam.")
-    sys.exit(1)
-print("GATE APROVADO.")
-spark.stop()
-sys.exit(0)
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    main()

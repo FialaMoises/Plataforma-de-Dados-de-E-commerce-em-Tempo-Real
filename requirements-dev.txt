@@ -4,3 +4,5 @@ ruff==0.4.9
 jsonschema==4.22.0
 Faker==25.8.0
 pyspark==3.5.5      # para os testes locais de transformação (opcional, pesado)
+pyyaml==6.0.1
+dbt-trino==1.8.0

@@ -11,36 +11,19 @@ Rodar (streaming contínuo):
     spark-submit /opt/spark/jobs/bronze_ingest.py
 """
 
+import logging
+from functools import partial
+
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.types import (
-    DoubleType,
-    IntegerType,
-    LongType,
-    StringType,
-    StructField,
-    StructType,
-)
+from schemas import KAFKA_BOOTSTRAP, PURCHASE_EVENT_SCHEMA
+from transforms import write_bronze_batch
 
-KAFKA_BOOTSTRAP = "kafka:9092"
+logger = logging.getLogger(__name__)
+
 TOPIC = "purchases"
 CHECKPOINT = "/opt/spark/checkpoints/bronze_purchases"
-
-# Schema-on-read: o contrato v1 traduzido para tipos Spark.
-EVENT_SCHEMA = StructType(
-    [
-        StructField("event_id", StringType()),
-        StructField("event_type", StringType()),
-        StructField("user_id", LongType()),
-        StructField("product_id", LongType()),
-        StructField("quantity", IntegerType()),
-        StructField("price", DoubleType()),
-        StructField("currency", StringType()),
-        StructField("timestamp", StringType()),
-        StructField("channel", StringType()),
-        StructField("schema_version", StringType()),
-    ]
-)
+MAX_OFFSETS_PER_TRIGGER = 5000
 
 spark = SparkSession.builder.appName("bronze-ingest").getOrCreate()
 spark.sparkContext.setLogLevel("WARN")
@@ -50,65 +33,21 @@ raw = (
     .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
     .option("subscribe", TOPIC)
     .option("startingOffsets", "earliest")
-    .option("maxOffsetsPerTrigger", 5000)
+    .option("maxOffsetsPerTrigger", MAX_OFFSETS_PER_TRIGGER)
     .load()
     .selectExpr("CAST(value AS STRING) AS raw_value")
 )
 
 # Parse tolerante: linhas inválidas viram parsed=null e seguem para a DLQ.
-parsed = raw.withColumn("parsed", F.from_json("raw_value", EVENT_SCHEMA))
+parsed = raw.withColumn("parsed", F.from_json("raw_value", PURCHASE_EVENT_SCHEMA))
 
-
-def write_batch(batch_df, batch_id: int) -> None:
-    batch_df = batch_df.persist()
-    now = F.current_timestamp()
-
-    # ── DLQ: não parseou OU faltam campos obrigatórios mínimos ──────────────
-    bad = batch_df.filter(
-        F.col("parsed").isNull()
-        | F.col("parsed.event_id").isNull()
-        | F.col("parsed.product_id").isNull()
-        | F.col("parsed.price").isNull()
-    ).select(
-        F.col("raw_value"),
-        F.lit("parse_or_required_field_violation").alias("error_reason"),
-        now.alias("ingest_ts"),
-        F.current_date().alias("ingest_date"),
-    )
-    if not bad.isEmpty():
-        bad.writeTo("lakehouse.bronze.purchases_dlq").append()
-
-    # ── Bronze válido: normaliza colunas + dedup intra-batch por event_id ───
-    good = (
-        batch_df.filter(F.col("parsed.event_id").isNotNull())
-        .select(
-            F.col("parsed.event_id").alias("event_id"),
-            F.col("parsed.event_type").alias("event_type"),
-            F.col("parsed.user_id").alias("user_id"),
-            F.col("parsed.product_id").alias("product_id"),
-            F.col("parsed.quantity").alias("quantity"),
-            F.col("parsed.price").alias("price"),
-            F.col("parsed.currency").alias("currency"),
-            F.to_timestamp("parsed.timestamp").alias("event_ts"),
-            F.col("parsed.channel").alias("channel"),
-            F.col("parsed.schema_version").alias("schema_version"),
-            now.alias("ingest_ts"),
-        )
-        .withColumn("event_date", F.to_date("event_ts"))
-        .dropDuplicates(["event_id"])
-    )
-
-    good.createOrReplaceTempView("updates")
-    # MERGE idempotente: se o event_id já existe no Bronze, não reinsere.
-    spark.sql("""
-        MERGE INTO lakehouse.bronze.purchases t
-        USING updates s
-        ON t.event_id = s.event_id
-        WHEN NOT MATCHED THEN INSERT *
-    """)
-    batch_df.unpersist()
-    print(f"[bronze] batch {batch_id} processado.")
-
+write_batch = partial(
+    write_bronze_batch,
+    table="lakehouse.bronze.purchases",
+    dlq_table="lakehouse.bronze.purchases_dlq",
+    required_parsed_fields=["event_id", "product_id", "price"],
+    schema=PURCHASE_EVENT_SCHEMA,
+)
 
 query = (
     parsed.writeStream.foreachBatch(write_batch)

@@ -1,0 +1,5 @@
+streamlit==1.36.0
+trino==0.328.0
+pandas==2.2.2
+confluent-kafka==2.4.0
+streamlit-autorefresh==1.0.1

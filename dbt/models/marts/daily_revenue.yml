@@ -1,0 +1,39 @@
+version: 2
+
+models:
+  - name: daily_revenue
+    description: >
+      Aggregated daily revenue by currency. One row per (event_date, currency).
+      Provides order count, items sold, total revenue, and average ticket.
+      Replaces the Spark gold_aggregations.py daily_revenue output.
+    columns:
+      - name: event_date
+        description: Calendar date of the purchase events.
+        tests:
+          - not_null
+      - name: currency
+        description: "ISO currency code (BRL, USD, EUR)."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['BRL', 'USD', 'EUR']
+      - name: orders
+        description: Count of distinct purchase events on this date/currency.
+        tests:
+          - not_null
+      - name: items_sold
+        description: Total units sold on this date/currency.
+        tests:
+          - not_null
+      - name: revenue
+        description: Total gross revenue on this date/currency (rounded to 2 decimals).
+        tests:
+          - not_null
+      - name: avg_ticket
+        description: Average revenue per order (revenue / orders).
+        tests:
+          - not_null
+
+    tests:
+      - unique:
+          column_name: "event_date || '-' || currency"

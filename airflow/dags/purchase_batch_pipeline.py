@@ -1,8 +1,11 @@
-"""DAG batch do pipeline `purchase`: Silver -> Quality Gate -> Gold.
+"""DAG batch do pipeline `purchase`: Silver -> Quality Gate -> Gold + Dims.
 
 O Bronze é alimentado de forma contínua pelo job de streaming (fora desta DAG).
 Esta DAG roda a parte batch e materializa o Gold APENAS se o Data Quality Gate
 aprovar — o gate é um circuit breaker (task que falha bloqueia o downstream).
+
+Após o Gold, as tabelas dimensionais (dim_date, dim_products, dim_users,
+fact_sales) são atualizadas em paralelo com as agregações.
 
 Cada task dispara um `spark-submit` no container `spark` via socket do Docker.
 """
@@ -23,12 +26,12 @@ default_args = {
 
 with DAG(
     dag_id="purchase_batch_pipeline",
-    description="Silver -> Data Quality Gate -> Gold (idempotente, backfill-friendly)",
+    description="Silver -> Data Quality Gate -> Gold + Dims (idempotente, backfill-friendly)",
     schedule="@hourly",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     default_args=default_args,
-    tags=["medallion", "purchase", "gold"],
+    tags=["medallion", "purchase", "gold", "dimensions"],
 ) as dag:
     silver = BashOperator(
         task_id="build_silver",
@@ -46,4 +49,10 @@ with DAG(
         bash_command=SUBMIT.format(job="gold_aggregations.py"),
     )
 
-    silver >> quality_gate >> gold
+    dims = BashOperator(
+        task_id="build_dimensions",
+        bash_command=SUBMIT.format(job="dim_tables.py"),
+    )
+
+    # Gold e Dims rodam em paralelo após o gate aprovar.
+    silver >> quality_gate >> [gold, dims]

@@ -5,10 +5,13 @@ Processa apenas a janela recente por padrão (incremental-friendly); para backfi
 passe --full.
 """
 
+import logging
 import sys
 
 from pyspark.sql import SparkSession
 from transforms import clean_purchases
+
+logger = logging.getLogger(__name__)
 
 spark = SparkSession.builder.appName("silver-purchases").getOrCreate()
 spark.sparkContext.setLogLevel("WARN")
@@ -32,5 +35,5 @@ spark.sql("""
 """)
 
 n = spark.read.table("lakehouse.silver.purchases").count()
-print(f"[silver] OK — total de linhas na Silver: {n}")
+logger.info("[silver] OK — total de linhas na Silver: %d", n)
 spark.stop()

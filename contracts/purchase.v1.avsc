@@ -1,0 +1,18 @@
+{
+  "type": "record",
+  "name": "PurchaseEvent",
+  "namespace": "com.ecommerce.events",
+  "doc": "Avro schema v1 para o evento de compra. Equivalente ao purchase.v1.schema.json, registrado no Schema Registry com compatibilidade BACKWARD.",
+  "fields": [
+    {"name": "event_id",        "type": "string",  "doc": "UUID — chave natural única (idempotência)."},
+    {"name": "event_type",      "type": {"type": "enum", "name": "PurchaseType", "symbols": ["purchase"]}, "doc": "Sempre 'purchase'."},
+    {"name": "user_id",         "type": "long",    "doc": "ID do usuário (>= 1)."},
+    {"name": "product_id",      "type": "long",    "doc": "ID do produto (>= 1)."},
+    {"name": "quantity",        "type": "int",     "doc": "Quantidade comprada (1–100)."},
+    {"name": "price",           "type": "double",  "doc": "Preço unitário (> 0)."},
+    {"name": "currency",        "type": {"type": "enum", "name": "Currency", "symbols": ["BRL", "USD", "EUR"]}, "doc": "Moeda."},
+    {"name": "timestamp",       "type": "string",  "doc": "Event-time ISO-8601 UTC."},
+    {"name": "channel",         "type": {"type": "enum", "name": "Channel", "symbols": ["web", "ios", "android"]}, "doc": "Canal de origem."},
+    {"name": "schema_version",  "type": "string",  "default": "1.0.0", "doc": "Versão do contrato."}
+  ]
+}

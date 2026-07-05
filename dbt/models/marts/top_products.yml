@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: top_products
+    description: >
+      Top 20 products by revenue for each day. One row per (event_date, product_id).
+      Products are ranked by descending revenue within each day.
+      Replaces the Spark gold_aggregations.py top_products output.
+    columns:
+      - name: event_date
+        description: Calendar date of the purchase events.
+        tests:
+          - not_null
+      - name: product_id
+        description: Identifier of the product.
+        tests:
+          - not_null
+      - name: items_sold
+        description: Total units sold for this product on this date.
+        tests:
+          - not_null
+      - name: revenue
+        description: Total gross revenue for this product on this date.
+        tests:
+          - not_null
+      - name: rank
+        description: "Rank within the day (1 = highest revenue). Maximum 20."
+        tests:
+          - not_null
+
+    tests:
+      - unique:
+          column_name: "event_date || '-' || cast(product_id as varchar)"

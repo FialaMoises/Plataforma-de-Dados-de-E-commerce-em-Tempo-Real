@@ -1,0 +1,37 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+rule_files:
+  - /etc/prometheus/rules.yml
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          environment: "production"
+
+  # Spark metrics (available when Spark applications are running)
+  - job_name: "spark"
+    metrics_path: /metrics/json
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    static_configs:
+      - targets: ["spark:4040"]
+        labels:
+          component: "spark"
+          environment: "production"
+    # Spark UI may not always be available; tolerate failures
+    honor_labels: true
+
+  # Kafka metrics via kafka-exporter
+  # Provides consumer group lag, topic partition info, and broker metrics
+  - job_name: "kafka-exporter"
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+        labels:
+          component: "kafka"
+          environment: "production"

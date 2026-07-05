@@ -4,7 +4,9 @@
 # Perfis (profiles) para não subir tudo de uma vez:
 #   core          -> kafka, minio, iceberg-rest, spark, generator   (slice E2E)
 #   orchestration -> postgres + airflow                              (Fase 5)
-#   bi            -> metabase                                        (Fase 8)
+#   monitoring    -> prometheus, grafana, kafka-exporter             (Fase 6)
+#   bi            -> trino, dashboard streamlit                      (Fase 8)
+#   metabase      -> metabase (BI clássico alternativo)
 #
 # Subir só o core:   docker compose --profile core up -d
 # ─────────────────────────────────────────────────────────────────────────────
@@ -16,6 +18,10 @@ services:
     image: apache/kafka:3.7.1
     profiles: ["core"]
     container_name: kafka
+    deploy:
+      resources:
+        limits:
+          memory: 1g
     ports:
       - "9092:9092"
     environment:
@@ -44,6 +50,10 @@ services:
     image: minio/minio:RELEASE.2024-06-13T22-53-53Z
     profiles: ["core"]
     container_name: minio
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     ports:
       - "9000:9000"   # API S3
       - "9001:9001"   # Console web
@@ -95,9 +105,15 @@ services:
 
   # ── Spark + Iceberg (executor dos jobs Bronze/Silver/Gold) ─────────────────
   spark:
-    image: tabulario/spark-iceberg:3.5.5_1.6.0
+    build: ./spark        # apache/spark + pandas/pyarrow (applyInPandasWithState)
+    image: ecommerce-lakehouse-spark
     profiles: ["core"]
     container_name: spark
+    user: root   # escreve checkpoints + cache Ivy dos pacotes Iceberg/Kafka
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     depends_on:
       kafka:
         condition: service_healthy
@@ -110,8 +126,8 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-password}
       AWS_REGION: ${AWS_REGION:-us-east-1}
     ports:
-      - "8080:8080"   # Spark UI (quando há job rodando)
-      - "4040:4040"
+      - "8090:8080"   # Spark master UI (8080 já costuma estar em uso no host)
+      - "4040:4040"   # Spark application UI (durante um job)
     volumes:
       - ./spark/conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
       - ./spark/jobs:/opt/spark/jobs
@@ -119,6 +135,26 @@ services:
       - spark-checkpoints:/opt/spark/checkpoints
     # mantém o container vivo para rodarmos jobs via `docker compose exec`
     entrypoint: ["/bin/sh", "-c", "tail -f /dev/null"]
+
+  # ── Schema Registry (Avro + compatibilidade BACKWARD) ───────────────────────
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.1
+    profiles: ["core"]
+    container_name: schema-registry
+    depends_on:
+      kafka:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    ports:
+      - "8085:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: BACKWARD
 
   # ── Simulador de eventos (producer) ────────────────────────────────────────
   generator:
@@ -132,10 +168,15 @@ services:
         condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:9092}
+      SCHEMA_REGISTRY_URL: ${SCHEMA_REGISTRY_URL:-http://schema-registry:8081}
       TOPIC_PURCHASES: ${TOPIC_PURCHASES:-purchases}
+      TOPIC_CARTS: ${TOPIC_CARTS:-carts}
       EVENTS_PER_SECOND: ${EVENTS_PER_SECOND:-20}
       BAD_EVENT_RATE: ${BAD_EVENT_RATE:-0.03}
       DUPLICATE_RATE: ${DUPLICATE_RATE:-0.02}
+      LATE_EVENT_RATE: ${LATE_EVENT_RATE:-0.05}
+      CART_SESSION_RATE: ${CART_SESSION_RATE:-0.15}
+      CART_CONVERSION: ${CART_CONVERSION:-0.6}
     restart: unless-stopped
 
   # ── Orquestração (perfil opcional) ─────────────────────────────────────────
@@ -164,20 +205,113 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - /var/run/docker.sock:/var/run/docker.sock
     # A DAG dispara `docker exec spark spark-submit ...`; por isso instalamos o CLI do Docker.
+    deploy:
+      resources:
+        limits:
+          memory: 1g
     command: >
       bash -c "apt-get update -qq && apt-get install -y -qq docker.io >/dev/null 2>&1 || true;
                airflow db migrate &&
                airflow users create --username admin --password admin --firstname a --lastname d --role Admin --email dev@local || true;
                (airflow scheduler &) && airflow webserver"
 
-  # ── BI (perfil opcional) ───────────────────────────────────────────────────
+  # ── Analytics / BI (perfil bi) ─────────────────────────────────────────────
+  # Trino: engine SQL que lê as tabelas Iceberg (bronze/silver/gold) sem mover dados.
+  trino:
+    image: trinodb/trino:453
+    profiles: ["bi"]
+    container_name: trino
+    # Requer o perfil `core` (minio + iceberg-rest) já no ar — ver README.
+    ports:
+      - "8083:8080"   # Trino UI / API (8080 interno)
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog
+
+  # Dashboard Streamlit: Camada 8 (Executivo / Produto / Operacional) sobre o Gold real.
+  dashboard:
+    build: ./dashboard
+    profiles: ["bi"]
+    container_name: dashboard
+    depends_on:
+      trino:
+        condition: service_started
+    environment:
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-kafka:9092}
+      TOPIC_PURCHASES: ${TOPIC_PURCHASES:-purchases}
+    volumes:
+      - ./dashboard/app.py:/app/app.py   # hot-reload do app sem rebuild
+    ports:
+      - "8501:8501"   # http://localhost:8501
+
+  # ── Metabase (BI clássico — perfil opcional alternativo) ───────────────────
   metabase:
     image: metabase/metabase:v0.50.8
-    profiles: ["bi"]
+    profiles: ["metabase"]
     ports:
       - "3000:3000"
+
+  # ── Observabilidade (perfil monitoring — Fase 6) ──────────────────────────
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    profiles: ["monitoring"]
+    container_name: kafka-exporter
+    command:
+      - --kafka.server=kafka:9092
+      - --topic.filter=purchases|carts
+      - --group.filter=.*
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "9308:9308"
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    profiles: ["monitoring"]
+    container_name: prometheus
+    depends_on:
+      - kafka-exporter
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/alerting/rules.yml:/etc/prometheus/rules.yml
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    profiles: ["monitoring"]
+    container_name: grafana
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    depends_on:
+      - prometheus
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana-data:/var/lib/grafana
 
 volumes:
   minio-data:
   spark-checkpoints:
   pg-data:
+  prometheus-data:
+  grafana-data:

@@ -1,0 +1,19 @@
+{
+  "type": "record",
+  "name": "CartEvent",
+  "namespace": "com.ecommerce.events",
+  "doc": "Avro schema v1 para eventos de carrinho. Equivalente ao cart.v1.schema.json, registrado no Schema Registry com compatibilidade BACKWARD.",
+  "fields": [
+    {"name": "event_id",        "type": "string",  "doc": "UUID — chave natural única."},
+    {"name": "event_type",      "type": {"type": "enum", "name": "CartActionType", "symbols": ["add_to_cart", "remove_from_cart", "checkout"]}, "doc": "Tipo de ação no carrinho."},
+    {"name": "cart_id",         "type": "string",  "doc": "UUID — identificador da sessão de carrinho."},
+    {"name": "user_id",         "type": "long",    "doc": "ID do usuário (>= 1)."},
+    {"name": "product_id",      "type": "long",    "doc": "ID do produto (>= 1)."},
+    {"name": "quantity",        "type": "int",     "doc": "Quantidade (1–100)."},
+    {"name": "price",           "type": "double",  "doc": "Preço unitário (> 0)."},
+    {"name": "currency",        "type": {"type": "enum", "name": "CartCurrency", "symbols": ["BRL", "USD", "EUR"]}, "doc": "Moeda."},
+    {"name": "timestamp",       "type": "string",  "doc": "Event-time ISO-8601 UTC."},
+    {"name": "channel",         "type": {"type": "enum", "name": "CartChannel", "symbols": ["web", "ios", "android"]}, "doc": "Canal de origem."},
+    {"name": "schema_version",  "type": "string",  "default": "1.0.0", "doc": "Versão do contrato."}
+  ]
+}

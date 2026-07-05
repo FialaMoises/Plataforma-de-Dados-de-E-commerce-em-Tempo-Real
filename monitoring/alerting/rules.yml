@@ -1,0 +1,52 @@
+groups:
+  - name: kafka_pipeline_alerts
+    interval: 30s
+    rules:
+      # Warning: consumer lag exceeds 10,000 messages for 5 minutes
+      - alert: KafkaLagHigh
+        expr: sum by (consumergroup, topic) (kafka_consumergroup_lag) > 10000
+        for: 5m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "Kafka consumer lag is high"
+          description: >-
+            Consumer group {{ $labels.consumergroup }} on topic {{ $labels.topic }}
+            has a lag of {{ $value }} messages (threshold: 10,000).
+            This may indicate that consumers are not keeping up with the incoming
+            message rate. Investigate consumer health and scaling.
+
+      # Critical: consumer lag exceeds 50,000 messages for 2 minutes
+      - alert: KafkaLagCritical
+        expr: sum by (consumergroup, topic) (kafka_consumergroup_lag) > 50000
+        for: 2m
+        labels:
+          severity: critical
+          component: kafka
+        annotations:
+          summary: "Kafka consumer lag is critically high"
+          description: >-
+            Consumer group {{ $labels.consumergroup }} on topic {{ $labels.topic }}
+            has a lag of {{ $value }} messages (threshold: 50,000).
+            Immediate action required. The pipeline may be stalled or severely
+            degraded. Check for consumer failures, resource exhaustion, or
+            upstream issues.
+
+      # Warning: no new messages on a topic for 10 minutes
+      - alert: KafkaTopicEmpty
+        expr: >-
+          sum by (topic) (
+            rate(kafka_topic_partition_current_offset[10m])
+          ) == 0
+        for: 10m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "Kafka topic has received no messages"
+          description: >-
+            Topic {{ $labels.topic }} has not received any new messages in the
+            last 10 minutes. This could indicate that the data generator or
+            upstream producer has stopped sending events. Verify that the
+            producer services are running and healthy.

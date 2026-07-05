@@ -1,0 +1,48 @@
+version: 2
+
+sources:
+  - name: silver
+    database: iceberg
+    schema: silver
+    description: >
+      Silver layer: cleaned, typed, deduplicated purchase events.
+      Populated by the Spark silver_purchases job via MERGE on event_id.
+    tables:
+      - name: purchases
+        description: >
+          Deduplicated purchase events with business rules applied.
+          Each row represents a single purchase event.
+        columns:
+          - name: event_id
+            description: Unique identifier for the purchase event (UUID).
+          - name: user_id
+            description: Identifier of the user who made the purchase.
+          - name: product_id
+            description: Identifier of the purchased product.
+          - name: quantity
+            description: Number of units purchased (always > 0).
+          - name: unit_price
+            description: Price per unit at the time of purchase (always > 0).
+          - name: gross_amount
+            description: "Derived: quantity * unit_price."
+          - name: currency
+            description: "ISO currency code. Accepted values: BRL, USD, EUR."
+          - name: event_ts
+            description: Timestamp when the purchase event occurred (event-time).
+          - name: channel
+            description: Sales channel (e.g. web, mobile, api).
+          - name: event_date
+            description: "Derived: DATE(event_ts). Used as partition key."
+
+  - name: bronze
+    database: iceberg
+    schema: bronze
+    description: >
+      Bronze layer: raw ingested data, append-only.
+    tables:
+      - name: purchases
+        description: Raw purchase events ingested from Kafka.
+      - name: purchases_dlq
+        description: Dead-letter queue for payloads that failed parse/contract.
+      - name: carts
+        description: Raw cart events (add_to_cart, remove_from_cart, checkout).
